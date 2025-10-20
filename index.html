@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-t" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>DATABEND - Obscure Edition (Normalized)</title>
+    <!-- All styles are now in styles.css -->
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- Main Application Wrapper -->
+    <div class="app">
+      <!-- Header: Logo, Controls, Status -->
+      <div class="header">
+        <div class="logo">DATABEND</div>
+        <div class="header-center">
+          <button class="btn" id="playBtn">Play</button>
+          <button class="btn secondary" id="stopBtn">Stop</button>
+          <button class="btn" id="processorsBtn">Processors</button>
+          <button class="btn secondary" id="exportBtn">Export</button>
+
+          <!-- File operations moved together for clarity -->
+          <button
+            class="btn secondary"
+            id="loadBtn"
+            style="
+              background: #2e6f72;
+              padding: 6px 10px;
+              font-weight: 700;
+              margin-left: 12px;
+            "
+          >
+            Load
+          </button>
+          <button
+            class="btn secondary"
+            id="duplicateBtn"
+            style="padding: 6px 10px"
+          >
+            Duplicate
+          </button>
+          <button
+            class="btn btn-danger"
+            id="deleteBtn"
+            style="padding: 6px 10px"
+          >
+            Delete
+          </button>
+
+          <!-- History controls -->
+          <button
+            class="btn secondary"
+            id="undoBtn"
+            style="padding: 6px 10px; margin-left: 12px"
+          >
+            Undo
+          </button>
+          <button class="btn secondary" id="redoBtn" style="padding: 6px 10px">
+            Redo
+          </button>
+        </div>
+        <div class="header-right"><span id="status">Ready</span></div>
+      </div>
+
+      <!-- Main Content: Waveform Display Area -->
+      <div class="main">
+        <div class="canvas-area">
+          <canvas id="canvas"></canvas>
+          <canvas id="overlay"></canvas>
+          <div id="glitchProgressWrap">
+            <div id="glitchProgress">
+              <div class="progress-bar-fill" id="progressBarFill"></div>
+              <div class="progress-bar-text" id="progressBarText">0%</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Hidden panel with original processor buttons for JS event delegation -->
+        <div class="panel" aria-hidden="true" style="display: none">
+          <div class="panel-content" style="padding: 8px">
+            <button id="bitcrushBtn"></button>
+            <button id="foldBtn"></button>
+            <button id="shiftBtn"></button>
+            <button id="invertBtn"></button>
+            <button id="randomBtn"></button>
+            <button id="corruptBtn"></button>
+            <button id="granularBtn"></button>
+            <button id="stutterBtn"></button>
+            <button id="reverseBtn"></button>
+            <button id="scrambleBtn"></button>
+            <button id="ringBtn"></button>
+            <button id="warpBtn"></button>
+            <button id="smearBtn"></button>
+            <button id="chebyBtn"></button>
+            <button id="combBtn"></button>
+            <button id="tapeStopBtn"></button>
+            <button id="melterBtn"></button>
+            <button id="shredderBtn"></button>
+            <button id="bitScrambleBtn"></button>
+            <button id="filterBtn"></button>
+            <button id="phaserBtn"></button>
+            <button id="delayBtn"></button>
+            <button id="reverbBtn"></button>
+            <button id="waveletChaosBtn"></button>
+            <button id="scaleCorruptorBtn"></button>
+            <button id="waveletTreeDisruptorBtn"></button>
+            <button id="entropyGlitchBtn"></button>
+          </div>
+        </div>
+
+        <!-- Processors Popup Menu -->
+        <div id="procMenu" aria-hidden="true">
+          <div
+            style="
+              display: flex;
+              gap: 8px;
+              align-items: center;
+              justify-content: space-between;
+              margin-bottom: 12px;
+            "
+          >
+            <div style="font-weight: 700; color: #cfeeea">Processors</div>
+            <button id="procClose" class="btn secondary" style="height: 36px">
+              Close
+            </button>
+          </div>
+
+          <!-- Shared Contextual Controls for Processors -->
+          <div
+            style="
+              display: flex;
+              gap: 12px;
+              align-items: center;
+              margin-bottom: 12px;
+              flex-wrap: wrap;
+            "
+          >
+            <label
+              style="
+                font-size: 12px;
+                color: #cfeeea;
+                display: flex;
+                gap: 8px;
+                align-items: center;
+              "
+            >
+              Intensity
+              <input
+                id="intensity"
+                type="range"
+                min="0"
+                max="100"
+                value="50"
+                style="width: 160px"
+              />
+            </label>
+            <label
+              style="
+                font-size: 12px;
+                color: #cfeeea;
+                display: flex;
+                gap: 8px;
+                align-items: center;
+              "
+            >
+              Chunk
+              <input
+                id="chunkSize"
+                type="range"
+                min="4"
+                max="4096"
+                step="4"
+                value="512"
+                style="width: 160px"
+              />
+              <span
+                id="chunkVal"
+                style="
+                  min-width: 48px;
+                  text-align: center;
+                  font-weight: 700;
+                  color: #cfeeea;
+                "
+                >512</span
+              >
+            </label>
+            <div
+              style="
+                font-size: 11px;
+                color: #9aa;
+                margin-left: 6px;
+                max-width: 40ch;
+              "
+            >
+              These shared controls apply only to some processors. Per-processor
+              modals may expose additional parameters.
+            </div>
+          </div>
+
+          <!-- Grid of Processor Buttons -->
+          <div class="grid">
+            <button class="proc-btn" data-target="bitcrushBtn">BitCrush</button>
+            <button class="proc-btn" data-target="foldBtn">Fold</button>
+            <button class="proc-btn" data-target="shiftBtn">Shift</button>
+            <button class="proc-btn" data-target="invertBtn">Invert</button>
+            <button class="proc-btn" data-target="randomBtn">Random</button>
+            <button class="proc-btn" data-target="corruptBtn">Corrupt</button>
+            <button class="proc-btn" data-target="granularBtn">Granular</button>
+            <button class="proc-btn" data-target="stutterBtn">Stutter</button>
+            <button class="proc-btn" data-target="reverseBtn">Reverse</button>
+            <button class="proc-btn" data-target="scrambleBtn">Scramble</button>
+            <button class="proc-btn" data-target="ringBtn">Ring Mod</button>
+            <button class="proc-btn" data-target="warpBtn">Bit Warp</button>
+            <button
+              class="proc-btn"
+              data-target="smearBtn"
+              style="grid-column: span 2"
+            >
+              Spectral Smear
+            </button>
+            <button class="proc-btn" data-target="chebyBtn">Chebyshev</button>
+            <button class="proc-btn" data-target="combBtn">Feedback</button>
+            <button class="proc-btn" data-target="tapeStopBtn">
+              Tape Stop
+            </button>
+            <button class="proc-btn" data-target="melterBtn">Melter</button>
+            <button class="proc-btn" data-target="shredderBtn">Shredder</button>
+            <button class="proc-btn" data-target="bitScrambleBtn">
+              Bit Scramble
+            </button>
+            <button class="proc-btn" data-target="filterBtn">Filter</button>
+            <button class="proc-btn" data-target="phaserBtn">Phaser</button>
+            <button class="proc-btn" data-target="delayBtn">Delay</button>
+            <button class="proc-btn" data-target="reverbBtn">Reverb</button>
+            <button
+              class="proc-btn"
+              data-target="waveletChaosBtn"
+              style="grid-column: span 2; background-color: #2e1a47"
+            >
+              Wavelet Chaos Engine
+            </button>
+            <button
+              class="proc-btn"
+              data-target="scaleCorruptorBtn"
+              style="grid-column: span 2; background-color: #2e1a47"
+            >
+              Scale-Subband Corruptor
+            </button>
+            <button
+              class="proc-btn"
+              data-target="waveletTreeDisruptorBtn"
+              style="grid-column: span 2; background-color: #2e1a47"
+            >
+              Wavelet Tree Disruptor
+            </button>
+            <button
+              class="proc-btn"
+              data-target="entropyGlitchBtn"
+              style="grid-column: span 2; background-color: #2e1a47"
+            >
+              Entropy Glitch Injector
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer: File Info and Duration -->
+      <div class="footer">
+        <div id="fileInfo">No file loaded</div>
+        <div>DATABEND - Audio Bender</div>
+        <div id="duration">0.00s</div>
+      </div>
+    </div>
+
+    <!-- Generic Modal Dialog Structure -->
+    <div id="modalOverlay">
+      <div id="modalDialog">
+        <div id="modalHeader"><div id="modalTitle">Process</div></div>
+        <div id="modalContent"></div>
+        <div id="modalFooter">
+          <button class="btn secondary" id="modalCancel">Cancel</button>
+          <button class="btn secondary" id="modalRandom">Random</button>
+          <button class="btn" id="modalCommit">Commit</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- All JavaScript is now in app.js and loaded here -->
+    <!-- 'defer' ensures the script runs after the document is parsed -->
+    <script src="app.js" defer></script>
+  </body>
+</html>
