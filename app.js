@@ -46,6 +46,16 @@ document.addEventListener("DOMContentLoaded", () => {
     "waveletTreeDisruptorBtn"
   );
   const entropyGlitchBtn = document.getElementById("entropyGlitchBtn");
+  
+  // Obscure processor buttons
+  const muLawBtn = document.getElementById("muLawBtn");
+  const bytebeatBtn = document.getElementById("bytebeatBtn");
+  const phaseScrambleBtn = document.getElementById("phaseScrambleBtn");
+  const selfFmBtn = document.getElementById("selfFmBtn");
+  const chaosMapBtn = document.getElementById("chaosMapBtn");
+  const karplusBtn = document.getElementById("karplusBtn");
+  const shimmerDelayBtn = document.getElementById("shimmerDelayBtn");
+  const formantFilterBtn = document.getElementById("formantFilterBtn");
 
   const intensityEl = document.getElementById("intensity");
   const chunkSizeEl = document.getElementById("chunkSize");
@@ -69,9 +79,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const modalCommit = document.getElementById("modalCommit");
   const modalRandom = document.getElementById("modalRandom");
   const modalCancel = document.getElementById("modalCancel");
-
+  const modalAudition = document.getElementById("modalAudition");
+ 
   /* ======= Audio / State ======= */
   let audioCtx = null;
+  let analyser = null;
   let current = null,
     history = [],
     historyIndex = -1;
@@ -82,6 +94,12 @@ document.addEventListener("DOMContentLoaded", () => {
     playLoopActive = false;
   let loopStart = 0,
     loopEnd = 0;
+  
+  /* ======= Audition State ======= */
+  let auditioning = false;
+  let auditionSource = null;
+  let isAuditionMode = false;
+  const freqData = new Uint8Array(256);
   const accent =
     getComputedStyle(document.documentElement).getPropertyValue("--accent") ||
     "#0d7377";
@@ -92,6 +110,21 @@ document.addEventListener("DOMContentLoaded", () => {
     ratio: 0,
     transients: [],
   };
+
+  /* ======= Zoom, Panning & Minimap State ======= */
+  let zoomStart = 0.0;
+  let zoomEnd = 1.0;
+  let hoveredEdge = null; // 'start', 'end', or null
+  let isPanning = false;
+  let panStartX = 0;
+  let panStartZoomStart = 0;
+  let panStartZoomEnd = 0;
+  let isDraggingViewport = false;
+  let dragViewportStartOffset = 0;
+
+  // Minimap canvas reference
+  const minimapCanvas = document.getElementById("minimapCanvas");
+  let mctx = minimapCanvas ? minimapCanvas.getContext("2d") : null;
 
   /* ======= IndexedDB Logic ======= */
   const DB_NAME = "databendDB",
@@ -136,6 +169,7 @@ document.addEventListener("DOMContentLoaded", () => {
     window.addEventListener("resize", resizeCanvases);
     requestAnimationFrame(drawLoop);
     setupOverlayInteraction();
+    setupMinimapInteraction();
     setupModal();
     setupProcessorsPopup();
 
@@ -193,6 +227,11 @@ document.addEventListener("DOMContentLoaded", () => {
         audioCtx.sampleRate
       );
 
+      // Setup analyser node
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 512; // 256 frequency bins
+      analyser.connect(audioCtx.destination);
+
       // Listen for state changes (e.g., when headphones are unplugged)
       audioCtx.addEventListener("statechange", () => {
         console.log("AudioContext state is now:", audioCtx.state);
@@ -218,7 +257,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* ======= Canvas & UI Helpers ======= */
   function resizeCanvases() {
-    [ctx, octx].forEach((c) => {
+    const contexts = [ctx, octx];
+    if (mctx) contexts.push(mctx);
+    contexts.forEach((c) => {
       const canvasEl = c.canvas;
       c.setTransform(1, 0, 0, 1, 0, 0);
       canvasEl.width = canvasEl.offsetWidth * devicePixelRatio;
@@ -236,7 +277,53 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  /* ======= File Loading ======= */
+  /* ======= File Loading & Drag-and-Drop ======= */
+  async function handleAudioFile(file) {
+    if (!file) {
+      setStatus("No file selected", 800);
+      return;
+    }
+    setStatus("Loading " + file.name + "...");
+
+    try {
+      if (!audioCtx) initAudioContext();
+      if (audioCtx.state === "suspended") await audioCtx.resume();
+
+      const ab = await file.arrayBuffer();
+      const decoded = await audioCtx.decodeAudioData(ab);
+
+      const len = decoded.length;
+      const samp = new Float32Array(len);
+
+      if (decoded.numberOfChannels === 1) {
+        samp.set(decoded.getChannelData(0));
+      } else {
+        const L = decoded.getChannelData(0),
+          R = decoded.getChannelData(1);
+        for (let i = 0; i < len; i++) samp[i] = (L[i] + R[i]) * 0.5;
+      }
+
+      current = samp;
+      history = [];
+      historyIndex = -1;
+      loopStart = 0;
+      loopEnd = 0;
+      zoomStart = 0.0;
+      zoomEnd = 1.0;
+      updateUI();
+      await saveState();
+      setStatus("Loaded: " + file.name, 2000);
+    } catch (err) {
+      console.error("Error loading file:", err);
+      setStatus("Error: " + err.message, 3000);
+      alert(
+        "Error loading file: " +
+          err.message +
+          "\n\nPlease check the browser console (F12) for more details."
+      );
+    }
+  }
+
   loadBtn.onclick = () => {
     initAudioContext();
     const inp = document.createElement("input");
@@ -245,49 +332,9 @@ document.addEventListener("DOMContentLoaded", () => {
       "audio/*,audio/wav,audio/mp3,audio/ogg,audio/mpeg,audio/aac,audio/flac";
     inp.multiple = false;
 
-    inp.onchange = async (e) => {
+    inp.onchange = (e) => {
       const file = e.target.files[0];
-      if (!file) {
-        setStatus("No file selected", 800);
-        return;
-      }
-      setStatus("Loading " + file.name + "...");
-
-      try {
-        if (!audioCtx) initAudioContext();
-        if (audioCtx.state === "suspended") await audioCtx.resume();
-
-        const ab = await file.arrayBuffer();
-        const decoded = await audioCtx.decodeAudioData(ab);
-
-        const len = decoded.length;
-        const samp = new Float32Array(len);
-
-        if (decoded.numberOfChannels === 1) {
-          samp.set(decoded.getChannelData(0));
-        } else {
-          const L = decoded.getChannelData(0),
-            R = decoded.getChannelData(1);
-          for (let i = 0; i < len; i++) samp[i] = (L[i] + R[i]) * 0.5;
-        }
-
-        current = samp;
-        history = [];
-        historyIndex = -1;
-        loopStart = 0;
-        loopEnd = 0;
-        updateUI();
-        await saveState();
-        setStatus("Loaded: " + file.name, 2000);
-      } catch (err) {
-        console.error("Error loading file:", err);
-        setStatus("Error: " + err.message, 3000);
-        alert(
-          "Error loading file: " +
-            err.message +
-            "\n\nPlease check the browser console (F12) for more details."
-        );
-      }
+      handleAudioFile(file);
     };
 
     try {
@@ -297,6 +344,27 @@ document.addEventListener("DOMContentLoaded", () => {
       alert("Could not open file picker. Please try again.");
     }
   };
+
+  // Setup Drag & Drop File Loading
+  const dropZone = document.getElementById("dropZone");
+  if (dropZone) {
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.classList.add("drag-hover");
+    });
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.classList.remove("drag-hover");
+    });
+    dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("drag-hover");
+      initAudioContext();
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        handleAudioFile(file);
+      }
+    });
+  }
 
   /* ======= History & State ======= */
   async function saveState() {
@@ -386,12 +454,47 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     if (!audioCtx) initAudioContext();
-    if (playing) stopPlaybackSilent();
 
     const sr = audioCtx.sampleRate;
     const hasLoop = loopEnd > loopStart && loopEnd - loopStart > 0.02;
     const startSample = hasLoop ? Math.floor(loopStart * sr) : 0;
     const endSample = hasLoop ? Math.floor(loopEnd * sr) : current.length;
+
+    if (isAuditionMode) {
+      try {
+        const region = current.slice(startSample, endSample);
+
+        let oldPeak = 0;
+        for (let i = 0; i < region.length; i++) {
+          const a = Math.abs(region[i]);
+          if (a > oldPeak) oldPeak = a;
+        }
+        oldPeak = Math.max(oldPeak, 1e-6);
+
+        const processed = fn(region, { ...opts, sr });
+
+        let newPeak = 0;
+        for (let i = 0; i < processed.length; i++) {
+          const a = Math.abs(processed[i]);
+          if (a > newPeak) newPeak = a;
+        }
+        newPeak = Math.max(newPeak, 1e-6);
+
+        const scale = oldPeak / newPeak;
+        if (isFinite(scale) && Math.abs(scale - 1) > 0.001 && scale > 0) {
+          for (let i = 0; i < processed.length; i++) processed[i] *= scale;
+        }
+        for (let i = 0; i < processed.length; i++)
+          processed[i] = Math.max(-1.0, Math.min(1.0, processed[i]));
+
+        playAuditionBuffer(processed);
+      } catch (err) {
+        console.error("Audition DSP err", err);
+      }
+      return;
+    }
+
+    if (playing) stopPlaybackSilent();
 
     glitchProgressStart(opts.label || "Processing...", opts.duration || 900);
 
@@ -445,25 +548,35 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* ======= Modal Logic ======= */
   let currentModal = { controls: {}, callback: null };
+
+  function getModalValues() {
+    const values = {};
+    for (const key in currentModal.controls) {
+      const id = `modal-control-${key}`;
+      const input = document.getElementById(id);
+      if (input) {
+        if (input.type === "range") {
+          values[key] = parseFloat(input.value);
+        } else if (input.tagName === "SELECT") {
+          values[key] = input.value;
+        }
+      }
+    }
+    return values;
+  }
+
   function setupModal() {
     modalCancel.onclick = hideModal;
     modalOverlay.onclick = (e) => {
       if (e.target === modalOverlay) hideModal();
     };
     modalCommit.onclick = () => {
+      auditioning = false;
+      if (modalAudition) modalAudition.classList.remove("active");
+      stopAuditionPlayback();
+
       if (currentModal.callback) {
-        const values = {};
-        for (const key in currentModal.controls) {
-          const id = `modal-control-${key}`;
-          const input = document.getElementById(id);
-          if (input) {
-            if (input.type === "range") {
-              values[key] = parseFloat(input.value);
-            } else if (input.tagName === "SELECT") {
-              values[key] = input.value;
-            }
-          }
-        }
+        const values = getModalValues();
         currentModal.callback(values);
       }
       hideModal();
@@ -485,8 +598,32 @@ document.addEventListener("DOMContentLoaded", () => {
             valueDisplay.textContent = rVal.toFixed(step < 1 ? 2 : 0);
         }
       }
+      if (auditioning) {
+        const values = getModalValues();
+        isAuditionMode = true;
+        currentModal.callback(values);
+        isAuditionMode = false;
+      }
     };
+
+    if (modalAudition) {
+      modalAudition.onclick = () => {
+        auditioning = !auditioning;
+        if (auditioning) {
+          stopPlaybackSilent();
+          modalAudition.classList.add("active");
+          const values = getModalValues();
+          isAuditionMode = true;
+          currentModal.callback(values);
+          isAuditionMode = false;
+        } else {
+          modalAudition.classList.remove("active");
+          stopAuditionPlayback();
+        }
+      };
+    }
   }
+
   function showModal(config) {
     if (!current) {
       setStatus("Load a file first", 800);
@@ -496,6 +633,11 @@ document.addEventListener("DOMContentLoaded", () => {
     currentModal = config;
     modalTitle.textContent = config.title;
     modalContent.innerHTML = "";
+
+    auditioning = false;
+    if (modalAudition) modalAudition.classList.remove("active");
+    stopAuditionPlayback();
+
     for (const key in config.controls) {
       const c = config.controls[key];
       const id = `modal-control-${key}`;
@@ -509,7 +651,6 @@ document.addEventListener("DOMContentLoaded", () => {
           .join("");
         controlHTML = `<div class="control-label">${c.label}</div><select id="${id}">${options}</select>`;
       } else {
-        // Default to range slider
         const labelHTML = `<div class="control-label">${c.label}<span class="value-display" id="${id}-value">${c.defaultValue}</span></div>`;
         const inputHTML = `<input type="range" id="${id}" min="${c.min}" max="${
           c.max
@@ -520,7 +661,19 @@ document.addEventListener("DOMContentLoaded", () => {
       controlWrapper.innerHTML = controlHTML;
       modalContent.appendChild(controlWrapper);
 
-      if (c.type !== "select") {
+      if (c.type === "select") {
+        const select = document.getElementById(id);
+        if (select) {
+          select.onchange = () => {
+            if (auditioning) {
+              const values = getModalValues();
+              isAuditionMode = true;
+              config.callback(values);
+              isAuditionMode = false;
+            }
+          };
+        }
+      } else {
         const input = document.getElementById(id),
           vDisplay = document.getElementById(`${id}-value`);
         if (input && vDisplay) {
@@ -528,13 +681,23 @@ document.addEventListener("DOMContentLoaded", () => {
             vDisplay.textContent = parseFloat(input.value).toFixed(
               c.step < 1 ? 2 : 0
             );
+            if (auditioning) {
+              const values = getModalValues();
+              isAuditionMode = true;
+              config.callback(values);
+              isAuditionMode = false;
+            }
           };
         }
       }
     }
     modalOverlay.classList.add("show");
   }
+
   function hideModal() {
+    auditioning = false;
+    if (modalAudition) modalAudition.classList.remove("active");
+    stopAuditionPlayback();
     modalOverlay.classList.remove("show");
   }
 
@@ -1692,6 +1855,598 @@ document.addEventListener("DOMContentLoaded", () => {
         ),
     });
 
+  /* ======= OBSCURE PROCESSORS CLICK HANDLERS ======= */
+
+  muLawBtn.onclick = () =>
+    showModal({
+      title: "μ-Law Glitch",
+      controls: {
+        mask: {
+          label: "Bitmask (XOR)",
+          min: 0,
+          max: 255,
+          step: 1,
+          defaultValue: 42,
+        },
+        noiseChance: {
+          label: "Glitch Chance",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          defaultValue: 0.25,
+        },
+      },
+      callback: (opts) =>
+        applybend(
+          (r) => {
+            const o = new Float32Array(r.length);
+            for (let i = 0; i < r.length; i++) {
+              const x = r[i];
+              // 1. encode to 8-bit u-law byte
+              const sgn = x < 0 ? -1 : 1;
+              const absX = Math.abs(x);
+              // Logarithmic compression
+              let y = sgn * (Math.log(1 + 255 * absX) / Math.log(256)) * 127 + 128;
+              y = Math.max(0, Math.min(255, Math.floor(y)));
+
+              // 2. apply glitch bitwise XOR based on noiseChance
+              if (Math.random() < opts.noiseChance) {
+                y = y ^ opts.mask;
+              }
+
+              // 3. decode u-law byte back to Float32
+              const decodedVal = (y - 128) / 127;
+              const decSgn = decodedVal < 0 ? -1 : 1;
+              const decAbs = Math.abs(decodedVal);
+              const decompressed = decSgn * ((Math.pow(256, decAbs) - 1) / 255);
+              o[i] = Math.max(-1.0, Math.min(1.0, decompressed));
+            }
+            return o;
+          },
+          { label: "Applying μ-Law Glitch..." }
+        ),
+    });
+
+  bytebeatBtn.onclick = () =>
+    showModal({
+      title: "Bytebeat Shaper",
+      controls: {
+        mode: {
+          type: "select",
+          label: "Equation Mode",
+          options: [
+            { value: "xor", label: "Logic XOR (v ^ t)" },
+            { value: "rhythm", label: "Rhythm Split ((t >> 8) | t)" },
+            { value: "fractal", label: "Fractal ((v & t) | (v >> 4))" },
+            { value: "mod", label: "Modular Sweep ((v * t) % 32768)" },
+          ],
+        },
+        shift: {
+          label: "Bit Shift Amount",
+          min: 1,
+          max: 16,
+          step: 1,
+          defaultValue: 8,
+        },
+        mix: {
+          label: "Dry/Wet Mix",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          defaultValue: 0.5,
+        },
+      },
+      callback: (opts) =>
+        applybend(
+          (r) => {
+            const o = new Float32Array(r.length);
+            for (let i = 0; i < r.length; i++) {
+              const x = r[i];
+              // Convert to 16-bit integer
+              let v = Math.floor(x * 32767);
+              const t = i;
+
+              // Apply bitwise equations
+              let res = v;
+              if (opts.mode === "xor") {
+                res = (v ^ (t >> opts.shift)) & 0xffff;
+              } else if (opts.mode === "rhythm") {
+                res = (v * ((t >> opts.shift) | (t >> 12))) & 0xffff;
+              } else if (opts.mode === "fractal") {
+                res = ((v & t) | (v >> (opts.shift % 8))) & 0xffff;
+              } else if (opts.mode === "mod") {
+                res = (v * (t & 0xff)) % 32768;
+              }
+
+              // Handle sign extension back from 16-bit unsigned/modulo representation to signed
+              if (res > 32767) res -= 65536;
+              if (res < -32768) res += 65536;
+
+              const processed = res / 32767;
+              o[i] = x * (1 - opts.mix) + processed * opts.mix;
+            }
+            return o;
+          },
+          { label: "Shaping Bytebeat..." }
+        ),
+    });
+
+  phaseScrambleBtn.onclick = () =>
+    showModal({
+      title: "Phase Scrambler",
+      controls: {
+        stages: {
+          label: "Filter Cascade Stages",
+          min: 2,
+          max: 12,
+          step: 1,
+          defaultValue: 6,
+        },
+        gain: {
+          label: "Feedback Gain (g)",
+          min: 0.05,
+          max: 0.95,
+          step: 0.01,
+          defaultValue: 0.65,
+        },
+        stretch: {
+          label: "Delay Line Multiplier",
+          min: 1,
+          max: 10,
+          step: 1,
+          defaultValue: 4,
+        },
+      },
+      callback: (opts) =>
+        applybend(
+          (r, { sr }) => {
+            const o = r.slice();
+            const numStages = opts.stages;
+            const g = opts.gain;
+            
+            // Define delay buffer for each stage
+            // We use different prime-like delay sizes to scramble phases asynchronously
+            const baseDelays = [41, 73, 113, 173, 239, 311, 401, 503, 613, 727, 853, 997];
+            const stagesData = [];
+            
+            for (let s = 0; s < numStages; s++) {
+              const delaySamples = Math.floor((baseDelays[s % baseDelays.length] * opts.stretch * sr) / 44100);
+              stagesData.push({
+                buffer: new Float32Array(delaySamples),
+                idx: 0
+              });
+            }
+
+            for (let i = 0; i < o.length; i++) {
+              let sVal = o[i];
+              for (let s = 0; s < numStages; s++) {
+                const sd = stagesData[s];
+                const dVal = sd.buffer[sd.idx];
+                
+                // Allpass filter formula: y[n] = g * x[n] + x[n - D] - g * y[n - D]
+                const yVal = g * sVal + dVal;
+                sd.buffer[sd.idx] = sVal - g * yVal; // feedforward & feedback
+                
+                sd.idx = (sd.idx + 1) % sd.buffer.length;
+                sVal = yVal; // Output of stage becomes input of next stage
+              }
+              o[i] = sVal;
+            }
+            return o;
+          },
+          { label: "Scrambling Phases..." }
+        ),
+    });
+
+  selfFmBtn.onclick = () =>
+    showModal({
+      title: "Self-FM Modulator",
+      controls: {
+        index: {
+          label: "Modulation Index",
+          min: 0.1,
+          max: 20,
+          step: 0.1,
+          defaultValue: 5,
+        },
+        feedback: {
+          label: "Feedback Amount",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          defaultValue: 0.35,
+        },
+        derivative: {
+          type: "select",
+          label: "Slope Modulate",
+          options: [
+            { value: "yes", label: "Slope (High pass)" },
+            { value: "no", label: "Direct Amplitude" },
+          ],
+        },
+      },
+      callback: (opts) =>
+        applybend(
+          (r, { sr }) => {
+            const len = r.length;
+            const o = new Float32Array(len);
+            const index = opts.index;
+            const feedback = opts.feedback;
+            const useSlope = opts.derivative === "yes";
+            
+            let prevOut = 0;
+            for (let i = 0; i < len; i++) {
+              // Calculate modulator value
+              let mod = 0;
+              if (useSlope) {
+                const prevIn = i > 0 ? r[i - 1] : 0;
+                mod = r[i] - prevIn; // crude first difference derivative
+              } else {
+                mod = r[i];
+              }
+              
+              // FM Offset calculation (modulator value + feedback of previous output)
+              const totalMod = mod + prevOut * feedback;
+              const offsetSamples = totalMod * index * 50; // scaled offset
+              
+              // Modulate lookup index
+              const targetIndex = i + offsetSamples;
+              
+              // Bounded lookup with linear interpolation
+              let val = 0;
+              if (targetIndex >= 0 && targetIndex < len - 1) {
+                const idx1 = Math.floor(targetIndex);
+                const idx2 = idx1 + 1;
+                const frac = targetIndex - idx1;
+                val = r[idx1] * (1 - frac) + r[idx2] * frac;
+              } else {
+                // Out of bounds wrap or clamping
+                const clampedIdx = Math.max(0, Math.min(len - 1, Math.floor(targetIndex)));
+                val = r[clampedIdx];
+              }
+              
+              o[i] = val;
+              prevOut = val;
+            }
+            return o;
+          },
+          { label: "Running Self-FM..." }
+        ),
+    });
+
+  chaosMapBtn.onclick = () =>
+    showModal({
+      title: "Logistic Chaos Map",
+      controls: {
+        r: {
+          label: "Chaos (r)",
+          min: 3.5,
+          max: 4.0,
+          step: 0.01,
+          defaultValue: 3.8,
+        },
+        iterations: {
+          label: "Iterations",
+          min: 1,
+          max: 8,
+          step: 1,
+          defaultValue: 3,
+        },
+        mix: {
+          label: "Dry/Wet Mix",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          defaultValue: 0.5,
+        },
+      },
+      callback: (opts) =>
+        applybend(
+          (r) => {
+            const len = r.length;
+            const o = new Float32Array(len);
+            const chaosR = opts.r;
+            const iter = opts.iterations;
+            const mix = opts.mix;
+
+            for (let i = 0; i < len; i++) {
+              const x = r[i];
+              // Map from [-1.0, 1.0] to [0.1, 0.9] to avoid logistic boundaries 0 and 1
+              let v = (x + 1.0) * 0.4 + 0.1;
+
+              // Run chaos iterations
+              for (let k = 0; k < iter; k++) {
+                v = chaosR * v * (1.0 - v);
+              }
+
+              // Map back to [-1.0, 1.0]
+              const processed = (v - 0.5) * 2.5; // slight gain boost for low amplitude map outcomes
+              const clamped = Math.max(-1.0, Math.min(1.0, processed));
+
+              o[i] = x * (1 - mix) + clamped * mix;
+            }
+            return o;
+          },
+          { label: "Applying Logistic Chaos..." }
+        ),
+    });
+
+  karplusBtn.onclick = () =>
+    showModal({
+      title: "Karplus-Strong Resonator",
+      controls: {
+        pitch: {
+          label: "Pitch (Hz)",
+          min: 40,
+          max: 1000,
+          step: 1,
+          defaultValue: 110,
+        },
+        decay: {
+          label: "Resonance / Decay",
+          min: 0.5,
+          max: 0.99,
+          step: 0.01,
+          defaultValue: 0.95,
+        },
+        mix: {
+          label: "Dry/Wet Mix",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          defaultValue: 0.6,
+        },
+      },
+      callback: (opts) =>
+        applybend(
+          (r, { sr }) => {
+            const len = r.length;
+            const o = new Float32Array(len);
+            const pitch = opts.pitch;
+            const decay = opts.decay;
+            const mix = opts.mix;
+
+            // Size of the delay buffer (representing string length)
+            const delaySamples = Math.max(2, Math.floor(sr / pitch));
+            const delayBuffer = new Float32Array(delaySamples);
+            let delayIdx = 0;
+
+            // Simple low-pass filter state
+            let prevFilterVal = 0;
+
+            for (let i = 0; i < len; i++) {
+              const x = r[i];
+
+              const delayedVal = delayBuffer[delayIdx];
+              const filterVal = (delayedVal + prevFilterVal) * 0.5;
+              prevFilterVal = filterVal;
+
+              const fedVal = filterVal * decay;
+
+              // Write to delay line (input + feedback)
+              const outVal = x + fedVal;
+              delayBuffer[delayIdx] = outVal;
+
+              delayIdx = (delayIdx + 1) % delaySamples;
+
+              o[i] = x * (1 - mix) + outVal * mix;
+            }
+            return o;
+          },
+          { label: "Plucking Waveguide..." }
+        ),
+    });
+
+  shimmerDelayBtn.onclick = () =>
+    showModal({
+      title: "Shimmer Delay",
+      controls: {
+        time: {
+          label: "Delay Time (ms)",
+          min: 50,
+          max: 1000,
+          step: 10,
+          defaultValue: 300,
+        },
+        pitchShift: {
+          label: "Pitch Shift (Semitones)",
+          min: -12,
+          max: 12,
+          step: 1,
+          defaultValue: 7,
+        },
+        feedback: {
+          label: "Feedback",
+          min: 0.0,
+          max: 0.95,
+          step: 0.01,
+          defaultValue: 0.6,
+        },
+        mix: {
+          label: "Dry/Wet Mix",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          defaultValue: 0.5,
+        },
+      },
+      callback: (opts) =>
+        applybend(
+          (r, { sr }) => {
+            const len = r.length;
+            const o = new Float32Array(len);
+            const delaySamps = Math.floor((opts.time * sr) / 1000);
+            const rate = Math.pow(2, opts.pitchShift / 12);
+            const feedback = opts.feedback;
+            const mix = opts.mix;
+
+            const delayBuf = new Float32Array(delaySamps * 2);
+            let writeIdx = 0;
+
+            // Sweep pointers for pitch shifting
+            let sweep = 0;
+            const windowSize = delaySamps;
+
+            for (let i = 0; i < len; i++) {
+              const x = r[i];
+
+              // Tap A
+              const offsetA = sweep;
+              let readIdxA = writeIdx - delaySamps - offsetA;
+              while (readIdxA < 0) readIdxA += delayBuf.length;
+              const valA = delayBuf[Math.floor(readIdxA) % delayBuf.length];
+
+              // Tap B (180 degrees out of phase)
+              const offsetB = (sweep + windowSize / 2) % windowSize;
+              let readIdxB = writeIdx - delaySamps - offsetB;
+              while (readIdxB < 0) readIdxB += delayBuf.length;
+              const valB = delayBuf[Math.floor(readIdxB) % delayBuf.length];
+
+              // Triangular crossfade windows
+              const winA = Math.abs(sweep - windowSize / 2) / (windowSize / 2);
+              const winB = 1.0 - winA;
+
+              // Interpolated feedback signal
+              const feedbackSignal = valA * winA + valB * winB;
+
+              // Write to delay line (input + feedback)
+              delayBuf[writeIdx] = x + feedbackSignal * feedback;
+              writeIdx = (writeIdx + 1) % delayBuf.length;
+
+              // Advance sweep at pitch shifting rate
+              sweep = (sweep + (1 - rate) + windowSize) % windowSize;
+
+              o[i] = x * (1 - mix) + feedbackSignal * mix;
+            }
+            return o;
+          },
+          { label: "Cascading Shimmer..." }
+        ),
+    });
+
+  formantFilterBtn.onclick = () =>
+    showModal({
+      title: "Formant Vowel Filter",
+      controls: {
+        vowel: {
+          type: "select",
+          label: "Vowel Formant",
+          options: [
+            { value: "A", label: "A (Father)" },
+            { value: "E", label: "E (Red)" },
+            { value: "I", label: "I (See)" },
+            { value: "O", label: "O (Over)" },
+            { value: "U", label: "U (Blue)" },
+          ],
+        },
+        resonance: {
+          label: "Filter Resonance (Q)",
+          min: 2,
+          max: 25,
+          step: 1,
+          defaultValue: 10,
+        },
+        mix: {
+          label: "Dry/Wet Mix",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          defaultValue: 0.7,
+        },
+      },
+      callback: (opts) =>
+        applybend(
+          (r, { sr }) => {
+            const len = r.length;
+            const o = new Float32Array(len);
+            
+            // Biquad bandpass coefficients helper
+            function makeBandpass(freq, q, sr) {
+              const w0 = (2 * Math.PI * freq) / sr;
+              const alpha = Math.sin(w0) / (2 * q);
+              const cosw0 = Math.cos(w0);
+              
+              const b0 = alpha;
+              const b1 = 0;
+              const b2 = -alpha;
+              const a0 = 1 + alpha;
+              const a1 = -2 * cosw0;
+              const a2 = 1 - alpha;
+              
+              return {
+                b0: b0 / a0,
+                b1: b1 / a0,
+                b2: b2 / a0,
+                a1: a1 / a0,
+                a2: a2 / a0,
+                x1: 0, x2: 0, y1: 0, y2: 0
+              };
+            }
+            
+            function processBiquad(f, x) {
+              const y = f.b0 * x + f.b1 * f.x1 + f.b2 * f.x2 - f.a1 * f.y1 - f.a2 * f.y2;
+              f.x2 = f.x1;
+              f.x1 = x;
+              f.y2 = f.y1;
+              f.y1 = y;
+              return y;
+            }
+
+            const vowels = {
+              A: [
+                { f: 730, g: 1.0 },
+                { f: 1090, g: 0.63 },
+                { f: 2440, g: 0.5 },
+              ],
+              E: [
+                { f: 270, g: 1.0 },
+                { f: 2290, g: 0.25 },
+                { f: 3010, g: 0.35 },
+              ],
+              I: [
+                { f: 270, g: 1.0 },
+                { f: 2290, g: 0.16 },
+                { f: 3500, g: 0.4 },
+              ],
+              O: [
+                { f: 570, g: 1.0 },
+                { f: 840, g: 0.32 },
+                { f: 2440, g: 0.25 },
+              ],
+              U: [
+                { f: 300, g: 1.0 },
+                { f: 870, g: 0.16 },
+                { f: 2240, g: 0.28 },
+              ],
+            };
+
+            const formants = vowels[opts.vowel] || vowels["A"];
+            const f1 = makeBandpass(formants[0].f, opts.resonance, sr);
+            const f2 = makeBandpass(formants[1].f, opts.resonance, sr);
+            const f3 = makeBandpass(formants[2].f, opts.resonance, sr);
+            
+            const g1 = formants[0].g;
+            const g2 = formants[1].g;
+            const g3 = formants[2].g;
+
+            for (let i = 0; i < len; i++) {
+              const x = r[i];
+              
+              // Process parallel filters
+              const y1 = processBiquad(f1, x) * g1;
+              const y2 = processBiquad(f2, x) * g2;
+              const y3 = processBiquad(f3, x) * g3;
+              
+              const sum = (y1 + y2 + y3) * 0.4;
+              
+              o[i] = x * (1 - opts.mix) + sum * opts.mix;
+            }
+            return o;
+          },
+          { label: "Filtering Vowels..." }
+        ),
+    });
+
   /* ======= Selection & Playback ======= */
   duplicateBtn.onclick = () => duplicateLoop();
   deleteBtn.onclick = () => deleteLoop();
@@ -1778,6 +2533,34 @@ document.addEventListener("DOMContentLoaded", () => {
     await saveAudioToDB(current);
   }
 
+  function playAuditionBuffer(floatArray) {
+    stopAuditionPlayback();
+    if (!audioCtx) initAudioContext();
+    if (audioCtx.state === "suspended") audioCtx.resume();
+
+    const buf = audioCtx.createBuffer(1, floatArray.length, audioCtx.sampleRate);
+    buf.getChannelData(0).set(floatArray);
+
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.connect(analyser || audioCtx.destination);
+    src.start(0);
+    auditionSource = src;
+  }
+
+  function stopAuditionPlayback() {
+    if (auditionSource) {
+      try {
+        auditionSource.stop();
+      } catch (e) {}
+      try {
+        auditionSource.disconnect();
+      } catch (e) {}
+      auditionSource = null;
+    }
+  }
+
   function stopPlaybackSilent() {
     if (playSource) {
       playSource.onended = null; // Prevent onended from firing on manual stop
@@ -1790,7 +2573,7 @@ document.addEventListener("DOMContentLoaded", () => {
       playSource = null;
     }
     playing = false;
-    playBtn.textContent = "Play";
+    if (playBtn) playBtn.classList.remove("active");
   }
 
   function stopPlayback() {
@@ -1814,7 +2597,7 @@ document.addEventListener("DOMContentLoaded", () => {
     buf.getChannelData(0).set(current);
     const src = audioCtx.createBufferSource();
     src.buffer = buf;
-    src.connect(audioCtx.destination);
+    src.connect(analyser || audioCtx.destination);
 
     playLoopActive = loopEnd > loopStart && loopEnd - loopStart > 0.02;
     if (playLoopActive) {
@@ -1834,7 +2617,7 @@ document.addEventListener("DOMContentLoaded", () => {
     playSource = src;
     playing = true;
     playStartTime = audioCtx.currentTime;
-    playBtn.textContent = "Playing...";
+    if (playBtn) playBtn.classList.add("active");
 
     src.onended = () => {
       // Only automatically stop if this source is still the active one
@@ -1868,6 +2651,18 @@ document.addEventListener("DOMContentLoaded", () => {
   function setupOverlayInteraction() {
     overlay.addEventListener("pointerdown", (ev) => {
       if (!current) return;
+
+      // Right-click (button 2), Middle-click (button 1) or Alt-key triggers Panning
+      if (ev.button === 1 || ev.button === 2 || ev.altKey) {
+        ev.preventDefault();
+        isPanning = true;
+        panStartX = ev.clientX;
+        panStartZoomStart = zoomStart;
+        panStartZoomEnd = zoomEnd;
+        overlay.setPointerCapture(ev.pointerId);
+        return;
+      }
+
       overlay.setPointerCapture(ev.pointerId);
       pointerDown = true;
       const x = ev.clientX - overlay.getBoundingClientRect().left;
@@ -1906,8 +2701,53 @@ document.addEventListener("DOMContentLoaded", () => {
     overlay.addEventListener("pointermove", (ev) => {
       const rect = overlay.getBoundingClientRect();
       const x = Math.max(0, Math.min(rect.width, ev.clientX - rect.left));
+
+      if (isPanning) {
+        const dx = ev.clientX - panStartX;
+        const fracDx = dx / (rect.width || 1);
+        const range = panStartZoomEnd - panStartZoomStart;
+        
+        let newStart = panStartZoomStart - fracDx * range;
+        let newEnd = panStartZoomEnd - fracDx * range;
+        
+        if (newStart < 0) {
+          newStart = 0;
+          newEnd = range;
+        }
+        if (newEnd > 1) {
+          newEnd = 1;
+          newStart = 1 - range;
+        }
+        
+        zoomStart = newStart;
+        zoomEnd = newEnd;
+        drawWaveform();
+        drawOverlay();
+        drawMinimap();
+        return;
+      }
+
       if (!pointerDown) {
         lastPlayheadPos = xToTime(x);
+        
+        // Loop boundary hover styling & resize cursor feedback
+        const [sx, ex] = loopPixels();
+        const edgeTolerance = 12;
+        let newHover = null;
+        if (sx !== null && Math.abs(x - sx) < edgeTolerance) {
+          overlay.style.cursor = "ew-resize";
+          newHover = "start";
+        } else if (ex !== null && Math.abs(x - ex) < edgeTolerance) {
+          overlay.style.cursor = "ew-resize";
+          newHover = "end";
+        } else {
+          overlay.style.cursor = "crosshair";
+          newHover = null;
+        }
+        if (newHover !== hoveredEdge) {
+          hoveredEdge = newHover;
+          drawOverlay();
+        }
         return;
       }
       dragCurrentX = x;
@@ -1934,6 +2774,11 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     overlay.addEventListener("pointerup", (ev) => {
+      if (isPanning) {
+        overlay.releasePointerCapture(ev.pointerId);
+        isPanning = false;
+        return;
+      }
       if (!pointerDown) return;
       pointerDown = false;
       overlay.releasePointerCapture(ev.pointerId);
@@ -1982,19 +2827,141 @@ document.addEventListener("DOMContentLoaded", () => {
       draggingEdge = null;
     });
 
+    overlay.addEventListener("pointerleave", () => {
+      hoveredEdge = null;
+      overlay.style.cursor = "default";
+      drawOverlay();
+    });
+
     overlay.addEventListener("dblclick", () => {
       loopStart = 0;
       loopEnd = 0;
     });
+
+    overlay.addEventListener("wheel", (e) => {
+      if (!current) return;
+      e.preventDefault();
+      
+      const zoomFactor = e.deltaY < 0 ? 0.85 : 1.15;
+      const rect = overlay.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseFrac = Math.max(0, Math.min(1, mouseX / (rect.width || 1)));
+      
+      const currentRange = zoomEnd - zoomStart;
+      const newRange = Math.max(0.0005, Math.min(1.0, currentRange * zoomFactor));
+      
+      const mouseTimeFrac = zoomStart + mouseFrac * currentRange;
+      let newZoomStart = mouseTimeFrac - mouseFrac * newRange;
+      let newZoomEnd = newZoomStart + newRange;
+      
+      if (newZoomStart < 0) {
+        newZoomStart = 0;
+        newZoomEnd = newRange;
+      }
+      if (newZoomEnd > 1) {
+        newZoomEnd = 1;
+        newZoomStart = 1 - newRange;
+      }
+      
+      zoomStart = newZoomStart;
+      zoomEnd = newZoomEnd;
+      
+      drawWaveform();
+      drawOverlay();
+      drawMinimap();
+    }, { passive: false });
+
+    overlay.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+    });
+  }
+  function setupMinimapInteraction() {
+    if (!minimapCanvas) return;
+
+    minimapCanvas.addEventListener("pointerdown", (e) => {
+      if (!current) return;
+      minimapCanvas.setPointerCapture(e.pointerId);
+      
+      const rect = minimapCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const frac = x / (rect.width || 1);
+      
+      const viewportWidth = zoomEnd - zoomStart;
+      
+      if (frac >= zoomStart && frac <= zoomEnd) {
+        isDraggingViewport = true;
+        dragViewportStartOffset = frac - zoomStart;
+      } else {
+        let newStart = frac - viewportWidth / 2;
+        let newEnd = frac + viewportWidth / 2;
+        
+        if (newStart < 0) {
+          newStart = 0;
+          newEnd = viewportWidth;
+        }
+        if (newEnd > 1) {
+          newEnd = 1;
+          newStart = 1 - viewportWidth;
+        }
+        
+        zoomStart = newStart;
+        zoomEnd = newEnd;
+        isDraggingViewport = true;
+        dragViewportStartOffset = viewportWidth / 2;
+        
+        drawWaveform();
+        drawOverlay();
+        drawMinimap();
+      }
+    });
+
+    minimapCanvas.addEventListener("pointermove", (e) => {
+      if (!isDraggingViewport) return;
+      const rect = minimapCanvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const frac = x / (rect.width || 1);
+      
+      const viewportWidth = zoomEnd - zoomStart;
+      let newStart = frac - dragViewportStartOffset;
+      let newEnd = newStart + viewportWidth;
+      
+      if (newStart < 0) {
+        newStart = 0;
+        newEnd = viewportWidth;
+      }
+      if (newEnd > 1) {
+        newEnd = 1;
+        newStart = 1 - viewportWidth;
+      }
+      
+      zoomStart = newStart;
+      zoomEnd = newEnd;
+      
+      drawWaveform();
+      drawOverlay();
+      drawMinimap();
+    });
+
+    minimapCanvas.addEventListener("pointerup", (e) => {
+      if (isDraggingViewport) {
+        minimapCanvas.releasePointerCapture(e.pointerId);
+        isDraggingViewport = false;
+      }
+    });
   }
   function xToTime(x) {
-    if (!audioCtx) return 0;
+    if (!audioCtx || !current) return 0;
     const rect = overlay.getBoundingClientRect();
-    return Math.max(0, Math.min(1, x / (rect.width || 1))) * durationSeconds();
+    const frac = Math.max(0, Math.min(1, x / (rect.width || 1)));
+    const tFrac = zoomStart + frac * (zoomEnd - zoomStart);
+    return tFrac * durationSeconds();
   }
   function timeToX(time) {
+    if (!audioCtx || !current) return 0;
     const rect = overlay.getBoundingClientRect();
-    return (time / Math.max(1e-4, durationSeconds())) * (rect.width || 1);
+    const tFrac = time / Math.max(1e-4, durationSeconds());
+    const frac = (tFrac - zoomStart) / Math.max(1e-6, zoomEnd - zoomStart);
+    return frac * (rect.width || 1);
   }
   function durationSeconds() {
     if (!audioCtx) return 0;
@@ -2005,6 +2972,34 @@ document.addEventListener("DOMContentLoaded", () => {
     return [timeToX(loopStart), timeToX(loopEnd)];
   }
 
+  function drawGrid(context, w, h) {
+    context.save();
+    context.strokeStyle = "rgba(43, 43, 53, 0.4)"; // fine dark grey lines
+    context.lineWidth = 1;
+    
+    // Draw horizontal dashed lines
+    context.setLineDash([2, 5]);
+    const horizDivisions = 6;
+    for (let i = 1; i < horizDivisions; i++) {
+      const y = Math.floor((i / horizDivisions) * h);
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(w, y);
+      context.stroke();
+    }
+
+    // Draw vertical dashed lines
+    const vertDivisions = 10;
+    for (let i = 1; i < vertDivisions; i++) {
+      const x = Math.floor((i / vertDivisions) * w);
+      context.beginPath();
+      context.moveTo(x, 0);
+      context.lineTo(x, h);
+      context.stroke();
+    }
+    context.restore();
+  }
+
   function drawOverlay() {
     const w = octx.canvas.width / devicePixelRatio,
       h = octx.canvas.height / devicePixelRatio;
@@ -2013,13 +3008,42 @@ document.addEventListener("DOMContentLoaded", () => {
       const sx = timeToX(loopStart),
         ex = timeToX(loopEnd);
       octx.save();
-      octx.fillStyle = hexToRGBA(accent, 0.08);
+      // Matte selection background - no neon glows
+      octx.fillStyle = hexToRGBA(accent, 0.06);
       octx.fillRect(sx, 0, ex - sx, h);
-      octx.lineWidth = 2;
+      octx.lineWidth = 1.5;
       octx.strokeStyle = accent;
-      octx.shadowColor = accent;
-      octx.shadowBlur = 12;
-      octx.strokeRect(sx + 1, 1, ex - sx - 2, h - 2);
+      octx.strokeRect(sx + 0.5, 0.5, ex - sx - 1, h - 1);
+      
+      // Draw loop boundary resize handles (small tabs at top and bottom)
+      const handleW = 6;
+      const handleH = 16;
+      
+      // Start loop boundary handle
+      octx.fillStyle = hoveredEdge === "start" || (isDragging && draggingEdge === "start") ? "#ffffff" : accent;
+      octx.fillRect(sx - handleW / 2, 0, handleW, handleH); // top handle tab
+      octx.fillRect(sx - handleW / 2, h - handleH, handleW, handleH); // bottom handle tab
+      
+      // End loop boundary handle
+      octx.fillStyle = hoveredEdge === "end" || (isDragging && draggingEdge === "end") ? "#ffffff" : accent;
+      octx.fillRect(ex - handleW / 2, 0, handleW, handleH); // top handle tab
+      octx.fillRect(ex - handleW / 2, h - handleH, handleW, handleH); // bottom handle tab
+      
+      // Draw highlighted vertical lines if hovered or dragging
+      octx.lineWidth = 2.0;
+      octx.strokeStyle = "#ffffff";
+      if (hoveredEdge === "start" || (isDragging && draggingEdge === "start")) {
+        octx.beginPath();
+        octx.moveTo(sx, 0);
+        octx.lineTo(sx, h);
+        octx.stroke();
+      }
+      if (hoveredEdge === "end" || (isDragging && draggingEdge === "end")) {
+        octx.beginPath();
+        octx.moveTo(ex, 0);
+        octx.lineTo(ex, h);
+        octx.stroke();
+      }
       octx.restore();
     }
     if (
@@ -2031,12 +3055,12 @@ document.addEventListener("DOMContentLoaded", () => {
       const sx = Math.min(dragStartX, dragCurrentX),
         ex = Math.max(dragStartX, dragCurrentX);
       octx.save();
-      octx.fillStyle = hexToRGBA(accent, 0.05);
+      octx.fillStyle = hexToRGBA(accent, 0.04);
       octx.fillRect(sx, 0, ex - sx, h);
-      octx.lineWidth = 1.6;
+      octx.lineWidth = 1.2;
       octx.strokeStyle = accent;
-      octx.setLineDash([6, 6]);
-      octx.strokeRect(sx + 1, 1, ex - sx - 2, h - 2);
+      octx.setLineDash([4, 4]);
+      octx.strokeRect(sx + 0.5, 0.5, ex - sx - 1, h - 1);
       octx.restore();
     }
     let playPos = lastPlayheadPos;
@@ -2044,7 +3068,6 @@ document.addEventListener("DOMContentLoaded", () => {
       const elapsed = audioCtx.currentTime - playStartTime;
       let posSec = playOffset + elapsed;
       if (playLoopActive && loopEnd > loopStart) {
-        // More robust loop position calculation
         if (posSec >= loopEnd) {
           posSec = loopStart + ((posSec - loopStart) % (loopEnd - loopStart));
         }
@@ -2057,7 +3080,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (current) {
       const x = timeToX(playPos);
       octx.save();
-      octx.strokeStyle = "#fff";
+      octx.strokeStyle = "#ffffff";
       octx.lineWidth = 1;
       octx.globalAlpha = playing ? 0.95 : 0.6;
       octx.beginPath();
@@ -2082,24 +3105,165 @@ document.addEventListener("DOMContentLoaded", () => {
     const w = ctx.canvas.width / devicePixelRatio,
       h = ctx.canvas.height / devicePixelRatio;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#0a0a0a";
+    ctx.fillStyle = "#070709"; // Match CSS background
     ctx.fillRect(0, 0, w, h);
+    
+    // Draw oscilloscope background grid
+    drawGrid(ctx, w, h);
+
+    // Draw real-time FFT Spectrogram Visualizer
+    if (analyser && (playing || auditioning)) {
+      analyser.getByteFrequencyData(freqData);
+      const numBars = freqData.length;
+      const barWidth = w / numBars;
+      ctx.save();
+      ctx.fillStyle = "rgba(245, 158, 11, 0.12)"; // Muted warm amber
+      for (let i = 0; i < numBars; i++) {
+        const magnitude = freqData[i] / 255;
+        const barHeight = magnitude * (h * 0.7);
+        const x = i * barWidth;
+        const y = (h - barHeight) / 2;
+        ctx.fillRect(x, y, barWidth - 1, barHeight);
+      }
+      ctx.restore();
+    }
+
     if (!current) return;
-    ctx.fillStyle = accent;
+
+    const startSample = Math.floor(zoomStart * current.length);
+    const endSample = Math.ceil(zoomEnd * current.length);
+    const zoomedLen = Math.max(1, endSample - startSample);
+    const step = zoomedLen / w;
+
+    if (step <= 1.0) {
+      // Sub-sample precision: draw clean vector lines and dots
+      ctx.save();
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let x = 0; x < w; x++) {
+        const sampleIdx = Math.min(current.length - 1, startSample + Math.floor(x * step));
+        const v = current[sampleIdx];
+        const y = ((v + 1) / 2) * h;
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+
+      // Draw dots if zoomed in very deeply (fewer than w/2 samples)
+      if (step < 0.5) {
+        ctx.fillStyle = "#ffffff";
+        for (let x = 0; x < w; x++) {
+          const sampleIdx = startSample + Math.floor(x * step);
+          if (sampleIdx >= current.length) break;
+          const v = current[sampleIdx];
+          const y = ((v + 1) / 2) * h;
+          ctx.fillRect(x - 1.5, y - 1.5, 3, 3);
+        }
+      }
+      ctx.restore();
+    } else {
+      // Traditional block min-max lines
+      ctx.save();
+      ctx.fillStyle = accent;
+      for (let x = 0; x < w; x++) {
+        const i = startSample + Math.floor(x * step);
+        let min = 1, max = -1;
+        const chunkEnd = Math.min(current.length, startSample + Math.ceil((x + 1) * step));
+        for (let j = i; j < chunkEnd; j++) {
+          const v = current[j];
+          if (v < min) min = v;
+          if (v > max) max = v;
+        }
+        const y1 = ((max + 1) / 2) * h,
+          y2 = ((min + 1) / 2) * h;
+        ctx.fillRect(x, y1, 1, Math.max(1, y2 - y1));
+      }
+      ctx.restore();
+    }
+  }
+  function drawMinimap() {
+    if (!mctx || !current) return;
+    const w = mctx.canvas.width / devicePixelRatio;
+    const h = mctx.canvas.height / devicePixelRatio;
+    mctx.clearRect(0, 0, w, h);
+    mctx.fillStyle = "#09090b";
+    mctx.fillRect(0, 0, w, h);
+
+    // Draw full waveform in a muted secondary text color
+    mctx.save();
+    mctx.fillStyle = "rgba(140, 142, 154, 0.25)";
     const step = Math.ceil(current.length / w);
     for (let x = 0; x < w; x++) {
       const i = x * step;
-      let min = 1,
-        max = -1;
+      let min = 1, max = -1;
       for (let j = 0; j < step && i + j < current.length; j++) {
         const v = current[i + j];
         if (v < min) min = v;
         if (v > max) max = v;
       }
-      const y1 = ((max + 1) / 2) * h,
-        y2 = ((min + 1) / 2) * h;
-      ctx.fillRect(x, y1, 1, Math.max(1, y2 - y1));
+      const y1 = ((max + 1) / 2) * h;
+      const y2 = ((min + 1) / 2) * h;
+      mctx.fillRect(x, y1, 1, Math.max(1, y2 - y1));
     }
+
+    // Draw loop selection range in minimap (in a faint accent amber)
+    if (loopEnd > loopStart) {
+      const duration = durationSeconds();
+      if (duration > 0) {
+        const lStartFrac = loopStart / duration;
+        const lEndFrac = loopEnd / duration;
+        mctx.fillStyle = hexToRGBA(accent, 0.08);
+        mctx.fillRect(lStartFrac * w, 0, (lEndFrac - lStartFrac) * w, h);
+        mctx.strokeStyle = hexToRGBA(accent, 0.25);
+        mctx.lineWidth = 1;
+        mctx.strokeRect(lStartFrac * w, 0.5, (lEndFrac - lStartFrac) * w, h - 1);
+      }
+    }
+
+    // Draw viewport box representing current zoom
+    const vx = zoomStart * w;
+    const vw = (zoomEnd - zoomStart) * w;
+    
+    // Draw masking outside viewport
+    mctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+    mctx.fillRect(0, 0, vx, h);
+    mctx.fillRect(vx + vw, 0, w - (vx + vw), h);
+    
+    // Draw viewport highlight box
+    mctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+    mctx.lineWidth = 1.5;
+    mctx.strokeRect(vx, 0.75, vw, h - 1.5);
+    
+    mctx.fillStyle = "rgba(255, 255, 255, 0.04)";
+    mctx.fillRect(vx, 0, vw, h);
+
+    // Draw active playhead in minimap if playing
+    let playPos = lastPlayheadPos;
+    if (playing && audioCtx) {
+      const elapsed = audioCtx.currentTime - playStartTime;
+      let posSec = playOffset + elapsed;
+      if (playLoopActive && loopEnd > loopStart) {
+        if (posSec >= loopEnd) {
+          posSec = loopStart + ((posSec - loopStart) % (loopEnd - loopStart));
+        }
+      }
+      playPos = posSec;
+    }
+    const duration = durationSeconds();
+    if (duration > 0) {
+      const playheadFrac = playPos / duration;
+      if (playheadFrac >= 0 && playheadFrac <= 1) {
+        mctx.strokeStyle = "#ffffff";
+        mctx.lineWidth = 1;
+        mctx.globalAlpha = playing ? 0.95 : 0.6;
+        mctx.beginPath();
+        mctx.moveTo(playheadFrac * w, 0);
+        mctx.lineTo(playheadFrac * w, h);
+        mctx.stroke();
+      }
+    }
+    mctx.restore();
   }
   let lastDrawTime = 0;
   function drawLoop(ts) {
@@ -2113,6 +3277,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!lastDrawTime || ts - lastDrawTime > 16) {
         drawWaveform();
         drawOverlay();
+        drawMinimap();
         lastDrawTime = ts;
       }
     }
@@ -2322,9 +3487,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   /* ======= Final UI Update ======= */
   function updateUI() {
-    if (!current || !audioCtx) {
+    const splash = document.getElementById("splashScreen");
+    const minimapArea = document.getElementById("minimapArea");
+    if (!current || current.length === 0 || !audioCtx) {
       durationEl.textContent = "0.00s";
       fileInfoEl.textContent = "No file loaded";
+      if (splash) splash.classList.remove("hidden");
+      if (minimapArea) minimapArea.classList.add("hidden");
       return;
     }
     const dur = durationSeconds();
@@ -2332,6 +3501,12 @@ document.addEventListener("DOMContentLoaded", () => {
     fileInfoEl.textContent = `${(current.length / 1000).toFixed(
       0
     )}k samples @ ${audioCtx.sampleRate}Hz`;
+    if (splash) splash.classList.add("hidden");
+    if (minimapArea) {
+      minimapArea.classList.remove("hidden");
+      resizeCanvases();
+      drawMinimap();
+    }
   }
 
   /* ======= Processors popup setup ======= */
@@ -2431,8 +3606,29 @@ document.addEventListener("DOMContentLoaded", () => {
     const w = ctx.canvas.width / devicePixelRatio;
     const h = ctx.canvas.height / devicePixelRatio;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = "#0a0a0a";
+    ctx.fillStyle = "#070709"; // Match CSS background
     ctx.fillRect(0, 0, w, h);
+    
+    // Draw oscilloscope background grid
+    drawGrid(ctx, w, h);
+
+    // Draw real-time FFT Spectrogram Visualizer
+    if (analyser && (playing || auditioning)) {
+      analyser.getByteFrequencyData(freqData);
+      const numBars = freqData.length;
+      const barWidth = w / numBars;
+      ctx.save();
+      ctx.fillStyle = "rgba(245, 158, 11, 0.12)"; // Muted warm amber
+      for (let i = 0; i < numBars; i++) {
+        const magnitude = freqData[i] / 255;
+        const barHeight = magnitude * (h * 0.7);
+        const x = i * barWidth;
+        const y = (h - barHeight) / 2;
+        ctx.fillRect(x, y, barWidth - 1, barHeight);
+      }
+      ctx.restore();
+    }
+
     if (!current || !audioCtx) return;
 
     const sr = audioCtx.sampleRate;
@@ -2446,46 +3642,42 @@ document.addEventListener("DOMContentLoaded", () => {
     const floorLevel = 1.0 - ratio;
     const decayTime = 0.05 * sr; // 50ms decay
 
-    // Create a low-res envelope for the preview
-    const previewEnvelope = new Float32Array(w).fill(floorLevel);
+    // Create an envelope for the region
+    const envelope = new Float32Array(region.length).fill(floorLevel);
     for (const t of transients) {
-      const t_px = (t / region.length) * w;
-      const decay_px = (decayTime / region.length) * w;
-      for (let i = 0; i < decay_px && Math.floor(t_px + i) < w; i++) {
-        const x = Math.floor(t_px + i);
-        const val = 1.0 - i / decay_px; // Linear decay
-        previewEnvelope[x] = Math.max(
-          previewEnvelope[x],
+      for (let i = 0; i < decayTime && t + i < region.length; i++) {
+        const val = 1.0 - i / decayTime; // Linear decay
+        envelope[t + i] = Math.max(
+          envelope[t + i],
           floorLevel + (1 - floorLevel) * val
         );
       }
     }
 
+    ctx.save();
     ctx.fillStyle = accent;
-    const step = Math.ceil(region.length / w);
+
+    // Viewport visible range
+    const vStartSample = Math.floor(zoomStart * current.length);
+    const vEndSample = Math.ceil(zoomEnd * current.length);
+    const zoomedLen = Math.max(1, vEndSample - vStartSample);
+    const step = zoomedLen / w;
+
     for (let x = 0; x < w; x++) {
-      const i = x * step;
-      let min = 1,
-        max = -1;
-      for (let j = 0; j < step && i + j < region.length; j++) {
-        const v = region[i + j];
-        if (v < min) min = v;
-        if (v > max) max = v;
+      const globalIdx = vStartSample + Math.floor(x * step);
+      if (globalIdx >= current.length) break;
+      let v = current[globalIdx];
+      
+      // Apply envelope if within the gated region
+      if (globalIdx >= startSample && globalIdx < endSample) {
+        const envIdx = globalIdx - startSample;
+        v *= envelope[envIdx];
       }
 
-      const env = previewEnvelope[x];
-      min *= env;
-      max *= env;
-
-      const y1 = ((max + 1) / 2) * h;
-      const y2 = ((min + 1) / 2) * h;
-      ctx.fillRect(
-        (startSample / current.length) * w + x,
-        y1,
-        1,
-        Math.max(1, y2 - y1)
-      );
+      const y = ((v + 1) / 2) * h;
+      ctx.fillRect(x, Math.min(h / 2, y), 1, Math.max(1, Math.abs(h / 2 - y) * 2));
     }
+    ctx.restore();
   }
 
   /**

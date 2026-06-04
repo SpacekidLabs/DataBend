@@ -1,83 +1,118 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="utf-t" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>DATABEND - Obscure Edition (Normalized)</title>
-    <!-- All styles are now in styles.css -->
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DATABEND - Experimental Audio Glitch & Wavelet Bender</title>
+    <meta name="description" content="DATABEND is an experimental, in-browser digital signal processor and audio bending tool. Load, slice, warp, and apply wavelet chaos to create unique soundscapes." />
+    <meta name="keywords" content="audio bender, databending, wavelet glitch, sound design, web audio api, audio editor, digital signal processing" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <!-- Main Application Wrapper -->
     <div class="app">
       <!-- Header: Logo, Controls, Status -->
-      <div class="header">
-        <div class="logo">DATABEND</div>
+      <header class="header">
+        <h1 class="logo" id="mainLogo">DATABEND</h1>
+        
         <div class="header-center">
-          <button class="btn" id="playBtn">Play</button>
-          <button class="btn secondary" id="stopBtn">Stop</button>
-          <button class="btn" id="processorsBtn">Processors</button>
-          <button class="btn secondary" id="exportBtn">Export</button>
+          <!-- Transport Button Group -->
+          <div class="btn-group transport-group">
+            <button class="btn accent-btn" id="playBtn" title="Play / Pause (Space)">Play</button>
+            <button class="btn secondary" id="stopBtn" title="Stop Playback">Stop</button>
+          </div>
 
-          <!-- File operations moved together for clarity -->
-          <button
-            class="btn secondary"
-            id="loadBtn"
-            style="
-              background: #2e6f72;
-              padding: 6px 10px;
-              font-weight: 700;
-              margin-left: 12px;
-            "
-          >
-            Load
-          </button>
-          <button
-            class="btn secondary"
-            id="duplicateBtn"
-            style="padding: 6px 10px"
-          >
-            Duplicate
-          </button>
-          <button
-            class="btn btn-danger"
-            id="deleteBtn"
-            style="padding: 6px 10px"
-          >
-            Delete
-          </button>
+          <!-- Main Actions Group -->
+          <div class="btn-group action-group">
+            <button class="btn" id="processorsBtn" title="Toggle Processors (P)">Processors</button>
+            <button class="btn secondary" id="exportBtn" title="Export as WAV (Cmd+S)">Export</button>
+          </div>
 
-          <!-- History controls -->
-          <button
-            class="btn secondary"
-            id="undoBtn"
-            style="padding: 6px 10px; margin-left: 12px"
-          >
-            Undo
-          </button>
-          <button class="btn secondary" id="redoBtn" style="padding: 6px 10px">
-            Redo
-          </button>
+          <!-- File Operations Group -->
+          <div class="btn-group file-group">
+            <button class="btn file-load-btn" id="loadBtn" title="Load Audio File">Load</button>
+            <button class="btn secondary" id="duplicateBtn" title="Duplicate Selection (Cmd+D)">Duplicate</button>
+            <button class="btn danger-btn" id="deleteBtn" title="Delete Selection (Backspace)">Delete</button>
+          </div>
+
+          <!-- History Group -->
+          <div class="btn-group history-group">
+            <button class="btn secondary" id="undoBtn" title="Undo (Cmd+Z)">Undo</button>
+            <button class="btn secondary" id="redoBtn" title="Redo (Cmd+Y)">Redo</button>
+          </div>
         </div>
-        <div class="header-right"><span id="status">Ready</span></div>
-      </div>
+        
+        <div class="header-right">
+          <span class="status-label">STATUS:</span>
+          <span id="status">Ready</span>
+        </div>
+      </header>
 
       <!-- Main Content: Waveform Display Area -->
-      <div class="main">
-        <div class="canvas-area">
+      <main class="main">
+        <section class="canvas-area" id="dropZone">
           <canvas id="canvas"></canvas>
           <canvas id="overlay"></canvas>
+          
+          <!-- Splash Screen (shown when no file is loaded) -->
+          <div id="splashScreen" class="splash-screen">
+            <div class="splash-content">
+              <div class="splash-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="17 8 12 3 7 8"></polyline>
+                  <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+              </div>
+              <h2 class="splash-title">Experimental Audio Lab</h2>
+              <p class="splash-subtitle">Select, warp, and disrupt audio in real-time</p>
+              
+              <div class="splash-instructions">
+                <div class="instruction-item">
+                  <span class="key-binding">DRAG & DROP</span>
+                  <span class="instruction-desc">audio file here to begin</span>
+                </div>
+                <div class="instruction-item">
+                  <span class="key-binding">CLICK LOAD</span>
+                  <span class="instruction-desc">to browse local files</span>
+                </div>
+                <div class="instruction-item">
+                  <span class="key-binding">DRAG ON CANVAS</span>
+                  <span class="instruction-desc">to define a loop segment</span>
+                </div>
+                <div class="instruction-item">
+                  <span class="key-binding">SHIFT + DRAG</span>
+                  <span class="instruction-desc">to apply Transient Gating</span>
+                </div>
+                <div class="instruction-item">
+                  <span class="key-binding">DBL-CLICK</span>
+                  <span class="instruction-desc">to clear loop selection</span>
+                </div>
+                <div class="instruction-item">
+                  <span class="key-binding">ARROWS UP / DOWN</span>
+                  <span class="instruction-desc">to pitch/time shift selection</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Progress Bar wrapper -->
           <div id="glitchProgressWrap">
             <div id="glitchProgress">
               <div class="progress-bar-fill" id="progressBarFill"></div>
               <div class="progress-bar-text" id="progressBarText">0%</div>
             </div>
           </div>
-        </div>
+        </section>
+
+        <!-- Minimap Viewport Slider -->
+        <section class="minimap-area hidden" id="minimapArea">
+          <canvas id="minimapCanvas"></canvas>
+        </section>
 
         <!-- Hidden panel with original processor buttons for JS event delegation -->
         <div class="panel" aria-hidden="true" style="display: none">
-          <div class="panel-content" style="padding: 8px">
+          <div class="panel-content">
             <button id="bitcrushBtn"></button>
             <button id="foldBtn"></button>
             <button id="shiftBtn"></button>
@@ -105,100 +140,48 @@
             <button id="scaleCorruptorBtn"></button>
             <button id="waveletTreeDisruptorBtn"></button>
             <button id="entropyGlitchBtn"></button>
+            <button id="muLawBtn"></button>
+            <button id="bytebeatBtn"></button>
+            <button id="phaseScrambleBtn"></button>
+            <button id="selfFmBtn"></button>
+            <button id="chaosMapBtn"></button>
+            <button id="karplusBtn"></button>
+            <button id="shimmerDelayBtn"></button>
+            <button id="formantFilterBtn"></button>
           </div>
         </div>
 
         <!-- Processors Popup Menu -->
-        <div id="procMenu" aria-hidden="true">
-          <div
-            style="
-              display: flex;
-              gap: 8px;
-              align-items: center;
-              justify-content: space-between;
-              margin-bottom: 12px;
-            "
-          >
-            <div style="font-weight: 700; color: #cfeeea">Processors</div>
-            <button id="procClose" class="btn secondary" style="height: 36px">
-              Close
-            </button>
+        <aside id="procMenu" class="proc-menu" aria-hidden="true">
+          <div class="proc-menu-header">
+            <h2 class="proc-menu-title">Effects Processors</h2>
+            <button id="procClose" class="btn secondary close-btn">Close</button>
           </div>
 
           <!-- Shared Contextual Controls for Processors -->
-          <div
-            style="
-              display: flex;
-              gap: 12px;
-              align-items: center;
-              margin-bottom: 12px;
-              flex-wrap: wrap;
-            "
-          >
-            <label
-              style="
-                font-size: 12px;
-                color: #cfeeea;
-                display: flex;
-                gap: 8px;
-                align-items: center;
-              "
-            >
-              Intensity
-              <input
-                id="intensity"
-                type="range"
-                min="0"
-                max="100"
-                value="50"
-                style="width: 160px"
-              />
-            </label>
-            <label
-              style="
-                font-size: 12px;
-                color: #cfeeea;
-                display: flex;
-                gap: 8px;
-                align-items: center;
-              "
-            >
-              Chunk
-              <input
-                id="chunkSize"
-                type="range"
-                min="4"
-                max="4096"
-                step="4"
-                value="512"
-                style="width: 160px"
-              />
-              <span
-                id="chunkVal"
-                style="
-                  min-width: 48px;
-                  text-align: center;
-                  font-weight: 700;
-                  color: #cfeeea;
-                "
-                >512</span
-              >
-            </label>
-            <div
-              style="
-                font-size: 11px;
-                color: #9aa;
-                margin-left: 6px;
-                max-width: 40ch;
-              "
-            >
-              These shared controls apply only to some processors. Per-processor
-              modals may expose additional parameters.
+          <div class="shared-controls">
+            <div class="control-field">
+              <label for="intensity">Intensity</label>
+              <div class="slider-wrapper">
+                <input id="intensity" type="range" min="0" max="100" value="50" />
+              </div>
             </div>
+            
+            <div class="control-field">
+              <label for="chunkSize">Chunk Size</label>
+              <div class="slider-wrapper">
+                <input id="chunkSize" type="range" min="4" max="4096" step="4" value="512" />
+                <span id="chunkVal" class="slider-val-badge">512</span>
+              </div>
+            </div>
+            
+            <p class="shared-controls-help">
+              Intensity and Chunk parameters apply globally to select processors. Modals will expose localized parameters for advanced algorithms.
+            </p>
           </div>
 
           <!-- Grid of Processor Buttons -->
-          <div class="grid">
+          <nav class="proc-grid" aria-label="Effects rack">
             <button class="proc-btn" data-target="bitcrushBtn">BitCrush</button>
             <button class="proc-btn" data-target="foldBtn">Fold</button>
             <button class="proc-btn" data-target="shiftBtn">Shift</button>
@@ -211,82 +194,68 @@
             <button class="proc-btn" data-target="scrambleBtn">Scramble</button>
             <button class="proc-btn" data-target="ringBtn">Ring Mod</button>
             <button class="proc-btn" data-target="warpBtn">Bit Warp</button>
-            <button
-              class="proc-btn"
-              data-target="smearBtn"
-              style="grid-column: span 2"
-            >
-              Spectral Smear
-            </button>
+            <button class="proc-btn span-two" data-target="smearBtn">Spectral Smear</button>
             <button class="proc-btn" data-target="chebyBtn">Chebyshev</button>
             <button class="proc-btn" data-target="combBtn">Feedback</button>
-            <button class="proc-btn" data-target="tapeStopBtn">
-              Tape Stop
-            </button>
+            <button class="proc-btn" data-target="tapeStopBtn">Tape Stop</button>
             <button class="proc-btn" data-target="melterBtn">Melter</button>
             <button class="proc-btn" data-target="shredderBtn">Shredder</button>
-            <button class="proc-btn" data-target="bitScrambleBtn">
-              Bit Scramble
-            </button>
+            <button class="proc-btn" data-target="bitScrambleBtn">Bit Scramble</button>
             <button class="proc-btn" data-target="filterBtn">Filter</button>
             <button class="proc-btn" data-target="phaserBtn">Phaser</button>
             <button class="proc-btn" data-target="delayBtn">Delay</button>
             <button class="proc-btn" data-target="reverbBtn">Reverb</button>
-            <button
-              class="proc-btn"
-              data-target="waveletChaosBtn"
-              style="grid-column: span 2; background-color: #2e1a47"
-            >
+            <button class="proc-btn" data-target="muLawBtn">μ-Law Glitch</button>
+            <button class="proc-btn" data-target="bytebeatBtn">Bytebeat Shaper</button>
+            <button class="proc-btn" data-target="phaseScrambleBtn">Phase Scramble</button>
+            <button class="proc-btn" data-target="selfFmBtn">Self-FM Mod</button>
+            <button class="proc-btn" data-target="chaosMapBtn">Logistic Chaos</button>
+            <button class="proc-btn" data-target="karplusBtn">Karplus-Strong</button>
+            <button class="proc-btn" data-target="shimmerDelayBtn">Shimmer Delay</button>
+            <button class="proc-btn" data-target="formantFilterBtn">Formant Vowel</button>
+            
+            <button class="proc-btn span-two subband-btn" data-target="waveletChaosBtn">
               Wavelet Chaos Engine
             </button>
-            <button
-              class="proc-btn"
-              data-target="scaleCorruptorBtn"
-              style="grid-column: span 2; background-color: #2e1a47"
-            >
+            <button class="proc-btn span-two subband-btn" data-target="scaleCorruptorBtn">
               Scale-Subband Corruptor
             </button>
-            <button
-              class="proc-btn"
-              data-target="waveletTreeDisruptorBtn"
-              style="grid-column: span 2; background-color: #2e1a47"
-            >
+            <button class="proc-btn span-two subband-btn" data-target="waveletTreeDisruptorBtn">
               Wavelet Tree Disruptor
             </button>
-            <button
-              class="proc-btn"
-              data-target="entropyGlitchBtn"
-              style="grid-column: span 2; background-color: #2e1a47"
-            >
+            <button class="proc-btn span-two subband-btn" data-target="entropyGlitchBtn">
               Entropy Glitch Injector
             </button>
-          </div>
-        </div>
-      </div>
+          </nav>
+        </aside>
+      </main>
 
       <!-- Footer: File Info and Duration -->
-      <div class="footer">
-        <div id="fileInfo">No file loaded</div>
-        <div>DATABEND - Audio Bender</div>
-        <div id="duration">0.00s</div>
-      </div>
+      <footer class="footer">
+        <div class="footer-item" id="fileInfo">No file loaded</div>
+        <div class="footer-title">DATABEND // AUDIO RESEARCH LAB</div>
+        <div class="footer-item" id="duration">0.00s</div>
+      </footer>
     </div>
 
     <!-- Generic Modal Dialog Structure -->
-    <div id="modalOverlay">
-      <div id="modalDialog">
-        <div id="modalHeader"><div id="modalTitle">Process</div></div>
-        <div id="modalContent"></div>
-        <div id="modalFooter">
+    <div id="modalOverlay" class="modal-overlay">
+      <div id="modalDialog" class="modal-dialog">
+        <header id="modalHeader" class="modal-header">
+          <h3 id="modalTitle" class="modal-title">Process</h3>
+        </header>
+        <div id="modalContent" class="modal-body"></div>
+        <footer id="modalFooter" class="modal-footer">
           <button class="btn secondary" id="modalCancel">Cancel</button>
           <button class="btn secondary" id="modalRandom">Random</button>
-          <button class="btn" id="modalCommit">Commit</button>
-        </div>
+          <button class="btn secondary" id="modalAudition" title="Listen to effect in real-time">Audition</button>
+          <button class="btn accent-btn" id="modalCommit">Commit</button>
+        </footer>
       </div>
     </div>
 
     <!-- All JavaScript is now in app.js and loaded here -->
-    <!-- 'defer' ensures the script runs after the document is parsed -->
     <script src="app.js" defer></script>
   </body>
 </html>
+
