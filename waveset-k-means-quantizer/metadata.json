@@ -1,0 +1,6 @@
+{
+  "name": "Waveset K-Means Quantizer",
+  "description": "A specialized audio processor that segments audio into wavesets, clusters them using K-Means, and resynthesizes the sound using cluster representatives.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

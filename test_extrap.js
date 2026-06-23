@@ -1,0 +1,10 @@
+const buffer = new Float32Array(10);
+buffer[0] = -0.8;
+buffer[1] = 0.9;
+buffer[2] = 0.1;
+const readIdx = -5;
+const idx0 = Math.max(0, Math.min(buffer.length - 1, Math.floor(readIdx)));
+const idx1 = Math.max(0, Math.min(buffer.length - 1, idx0 + 1));
+const frac = readIdx - idx0;
+const val = buffer[idx0] * (1 - frac) + buffer[idx1] * frac;
+console.log("val:", val);

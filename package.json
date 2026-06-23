@@ -1,0 +1,76 @@
+{
+  "name": "databend",
+  "version": "1.1.0",
+  "description": "Experimental Audio Glitch & Wavelet Bender",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "keywords": [
+    "audio",
+    "glitch",
+    "wavelet",
+    "databend",
+    "dsp"
+  ],
+  "author": "DATABEND Lab",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^25.9.8",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.databend.app",
+    "productName": "DATABEND",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "app.js",
+      "spectralWorker.js",
+      "kmeansWorker.js",
+      "styles.css",
+      "main.js",
+      "preload.js",
+      "splash.html",
+      "splash-preload.js",
+      "build/icon.png"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "identity": null,
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "title": "Install DATABEND",
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 410,
+          "y": 150,
+          "type": "link",
+          "path": "/Applications"
+        },
+        {
+          "x": 130,
+          "y": 150,
+          "type": "file"
+        }
+      ]
+    }
+  }
+}

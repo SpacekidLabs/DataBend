@@ -1,0 +1,30 @@
+# OS cruft
+.DS_Store
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+/build/*
+!/build/icon.png
+vst_host_juce/build/
+vst_host_juce/JUCE/
+
+# Local Python environment
+vst_host_backend/venv/
+**/__pycache__/
+*.pyc
+
+# Local editor state
+.idea/
+.vscode/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
