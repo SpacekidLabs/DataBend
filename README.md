@@ -45,14 +45,13 @@ The packaged output is written to `dist/`.
 - `splash.html`, `splash-preload.js`: Launch splash screen
 - `*Worker.js`: Audio-processing workers
 - `build/icon.png`: App icon used by Electron
-- `vst_host_backend/`: Python-based host experiment
-- `vst_host_juce/`: JUCE VST host source and support files
 - `waveset-k-means-quantizer/`: Separate audio-analysis prototype
 
 ## Repo Hygiene
 
 - Generated folders such as `dist/`, `node_modules/`, and local virtual environments are ignored.
 - The repository keeps the source tree and packaging inputs only, so the Git history stays readable.
+- The retired VST host experiment has been removed from the published project tree.
 
 ## Status
 
