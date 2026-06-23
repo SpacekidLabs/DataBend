@@ -7,10 +7,15 @@ node_modules/
 
 # Build output
 dist/
+/release/
 /build/*
 !/build/icon.png
 vst_host_juce/build/
 vst_host_juce/JUCE/
+*.dmg
+*.zip
+*.pkg
+*.asar
 
 # Local Python environment
 vst_host_backend/venv/

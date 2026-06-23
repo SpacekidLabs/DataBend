@@ -1,21 +1,37 @@
 {
   "name": "databend",
   "version": "1.1.0",
-  "description": "Experimental Audio Glitch & Wavelet Bender",
+  "description": "An experimental Electron audio editor for glitch, slicing, and spectral processing.",
   "main": "main.js",
   "scripts": {
+    "dev": "electron .",
     "start": "electron .",
+    "build": "electron-builder",
     "dist": "electron-builder"
   },
   "keywords": [
     "audio",
+    "electron",
     "glitch",
+    "editor",
+    "waveform",
     "wavelet",
     "databend",
     "dsp"
   ],
   "author": "DATABEND Lab",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:SpacekidLabs/DataBend.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SpacekidLabs/DataBend/issues"
+  },
+  "homepage": "https://github.com/SpacekidLabs/DataBend#readme",
+  "engines": {
+    "node": ">=18"
+  },
   "devDependencies": {
     "electron": "^25.9.8",
     "electron-builder": "^24.13.3"
@@ -36,6 +52,7 @@
       "preload.js",
       "splash.html",
       "splash-preload.js",
+      "splash-logo.png",
       "build/icon.png"
     ],
     "mac": {
